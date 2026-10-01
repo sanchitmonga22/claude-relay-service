@@ -6,6 +6,7 @@
 
 jest.mock('../src/models/redis', () => ({
   getClaudeAccount: jest.fn(async () => ({})),
+  getAllClaudeAccounts: jest.fn(async () => []),
   setClaudeAccount: jest.fn(async () => {}),
   client: { hdel: jest.fn(async () => 1) }
 }))
@@ -289,6 +290,40 @@ describe('updateClaudeUsageSnapshot', () => {
 
     expect(savedAccount().fableRateLimitEndAt).toBe('2026-10-06T01:00:00.000Z')
     expect(savedAccount().opusRateLimitEndAt).toBeUndefined()
+  })
+
+  it('refreshes only active oauth accounts from the cleanup cycle', async () => {
+    const redis = require('../src/models/redis')
+    redis.getAllClaudeAccounts.mockResolvedValue([
+      {
+        id: 'acc-1',
+        isActive: 'true',
+        status: 'active',
+        accessToken: 'present',
+        scopes: 'user:profile user:inference'
+      },
+      {
+        id: 'setup-token',
+        isActive: 'true',
+        status: 'active',
+        accessToken: 'present',
+        scopes: 'user:inference'
+      }
+    ])
+    const usage = {
+      five_hour: { utilization: 0, resets_at: '2026-10-01T07:00:00Z' },
+      limits: []
+    }
+    const fetch = jest.spyOn(claudeAccountService, 'fetchOAuthUsage').mockResolvedValue(usage)
+    const update = jest.spyOn(claudeAccountService, 'updateClaudeUsageSnapshot').mockResolvedValue()
+
+    await expect(claudeAccountService.refreshAllOAuthUsageSnapshots()).resolves.toBe(1)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith('acc-1')
+    expect(update).toHaveBeenCalledWith('acc-1', usage)
+
+    fetch.mockRestore()
+    update.mockRestore()
   })
 
   it('persists scoped models even when no top-level window was returned', async () => {
