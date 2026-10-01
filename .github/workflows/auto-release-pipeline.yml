@@ -268,18 +268,28 @@ jobs:
     - name: Prepare image names
       id: image_names
       if: steps.check.outputs.needs_bump == 'true'
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       run: |
-        DOCKER_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
-        if [ -z "$DOCKER_USERNAME" ]; then
-          DOCKER_USERNAME="weishaw"
-        fi
-
-        DOCKER_IMAGE=$(echo "${DOCKER_USERNAME}/claude-relay-service" | tr '[:upper:]' '[:lower:]')
         GHCR_IMAGE=$(echo "ghcr.io/${{ github.repository_owner }}/claude-relay-service" | tr '[:upper:]' '[:lower:]')
+        TAG="${{ steps.next_version.outputs.new_tag }}"
+        VERSION="${{ steps.next_version.outputs.new_version }}"
+        TAGS="${GHCR_IMAGE}:${TAG}"$'\n'"${GHCR_IMAGE}:latest"$'\n'"${GHCR_IMAGE}:${VERSION}"
+        DOCKER_IMAGE=""
+        if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+          DOCKER_IMAGE=$(echo "${DOCKERHUB_USERNAME}/claude-relay-service" | tr '[:upper:]' '[:lower:]')
+          TAGS="${DOCKER_IMAGE}:${TAG}"$'\n'"${DOCKER_IMAGE}:latest"$'\n'"${DOCKER_IMAGE}:${VERSION}"$'\n'"${TAGS}"
+        else
+          echo "Docker Hub credentials are not set; publishing to GHCR only"
+        fi
 
         {
           echo "docker_image=${DOCKER_IMAGE}"
           echo "ghcr_image=${GHCR_IMAGE}"
+          echo "tags<<EOF"
+          echo "$TAGS"
+          echo "EOF"
         } >> "$GITHUB_OUTPUT"
 
     - name: Create GitHub Release
@@ -419,7 +429,7 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Log in to Docker Hub
-      if: steps.check.outputs.needs_bump == 'true'
+      if: steps.check.outputs.needs_bump == 'true' && steps.image_names.outputs.docker_image != ''
       uses: docker/login-action@v3
       with:
         registry: docker.io
@@ -441,13 +451,7 @@ jobs:
         context: .
         platforms: linux/amd64,linux/arm64
         push: true
-        tags: |
-          ${{ steps.image_names.outputs.docker_image }}:${{ steps.next_version.outputs.new_tag }}
-          ${{ steps.image_names.outputs.docker_image }}:latest
-          ${{ steps.image_names.outputs.docker_image }}:${{ steps.next_version.outputs.new_version }}
-          ${{ steps.image_names.outputs.ghcr_image }}:${{ steps.next_version.outputs.new_tag }}
-          ${{ steps.image_names.outputs.ghcr_image }}:latest
-          ${{ steps.image_names.outputs.ghcr_image }}:${{ steps.next_version.outputs.new_version }}
+        tags: ${{ steps.image_names.outputs.tags }}
         labels: |
           org.opencontainers.image.version=${{ steps.next_version.outputs.new_version }}
           org.opencontainers.image.revision=${{ github.sha }}

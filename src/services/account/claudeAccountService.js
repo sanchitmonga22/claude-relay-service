@@ -18,6 +18,7 @@ const tokenRefreshService = require('../tokenRefreshService')
 const LRUCache = require('../../utils/lruCache')
 const { formatDateWithTimezone, getISOStringWithTimezone } = require('../../utils/dateHelper')
 const { isOpus45OrNewer, RATE_LIMITED_MODEL_FAMILIES } = require('../../utils/modelHelper')
+const { reconcileModelFamilyLocks } = require('../../utils/rateLimitHeaderHelper')
 const {
   parseBooleanLike,
   normalizeOptionalNonNegativeInteger,
@@ -2316,8 +2317,13 @@ class ClaudeAccountService {
 
     const accountData = await redis.getClaudeAccount(accountId)
     if (accountData && Object.keys(accountData).length > 0) {
-      Object.assign(accountData, updates)
+      const reconciled = reconcileModelFamilyLocks(accountData, scopedModels)
+      for (const field of reconciled.fieldsToDelete) delete accountData[field]
+      Object.assign(accountData, updates, reconciled.updates)
       await redis.setClaudeAccount(accountId, accountData)
+      if (reconciled.fieldsToDelete.length > 0) {
+        await redis.client.hdel(`claude:account:${accountId}`, ...reconciled.fieldsToDelete)
+      }
       logger.debug(
         `📊 Updated Claude usage snapshot for account ${accountId}:`,
         Object.keys(updates)
