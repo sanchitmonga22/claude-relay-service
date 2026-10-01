@@ -116,7 +116,7 @@ function parseRateLimitWindows(headers) {
  * 解析一次 429 应该使用的 reset 时间戳。
  *
  * 优先级：
- *   1. 与请求模型家族匹配、且 status=rejected 的模型级窗口（如 Opus 的 7d_oi）
+ *   1. 与请求模型家族匹配、且 status=rejected 的模型级窗口（如 Fable 的 7d_oi）
  *   2. status=rejected 的账号级窗口（5h / 7d），取最晚的那个 —— 只有它们全部
  *      恢复后账号才真正可用
  *   3. 兜底：代表窗口的 unified-reset，并按 maxFallbackSeconds 钳制
