@@ -62,7 +62,7 @@ describe('resolveRateLimitReset', () => {
     expect(result.authoritative).toBe(true)
   })
 
-  it('ignores a rejected 7d_oi header because that Opus window is no longer real', () => {
+  it('does not apply a rejected Fable 7d_oi window to an Opus request', () => {
     const result = resolveRateLimitReset(
       headers({
         'anthropic-ratelimit-unified-7d_oi-status': 'rejected',
@@ -80,6 +80,24 @@ describe('resolveRateLimitReset', () => {
       family: null,
       resetTimestamp: FIVE_HOUR_RESET
     })
+  })
+
+  it('keeps a rejected 7d_oi window on Fable only', () => {
+    const onlyFable = headers({
+      'anthropic-ratelimit-unified-7d_oi-status': 'rejected',
+      'anthropic-ratelimit-unified-7d_oi-reset': String(SEVEN_DAY_RESET)
+    })
+    const fable = resolveRateLimitReset(onlyFable, 'fable', { now: NOW })
+    const opus = resolveRateLimitReset(onlyFable, 'opus', { now: NOW })
+
+    expect(fable.windowKey).toBe('7d_oi')
+    expect(fable.scope).toBe('model')
+    expect(classifyRateLimitMark(fable, 'fable')).toEqual({
+      action: 'model',
+      family: 'fable',
+      resetTimestamp: SEVEN_DAY_RESET
+    })
+    expect(classifyRateLimitMark(opus, 'opus').action).toBe('none')
   })
 
   it('does not park Opus on the shared 7-day reset when that window is the one rejected', () => {
@@ -190,7 +208,7 @@ describe('resolveRateLimitReset', () => {
 describe('parseRateLimitWindows', () => {
   it('parses every window the upstream reports', () => {
     const windows = parseRateLimitWindows(headers())
-    expect(windows.map((w) => w.key)).toEqual(['5h', '7d'])
+    expect(windows.map((w) => w.key)).toEqual(['5h', '7d', '7d_oi'])
 
     const fiveHour = windows.find((w) => w.key === '5h')
     expect(fiveHour).toMatchObject({
@@ -201,7 +219,8 @@ describe('parseRateLimitWindows', () => {
       isAccountWide: true
     })
 
-    expect(windows.find((w) => w.key === '7d_oi')).toBeUndefined()
+    const fableWindow = windows.find((w) => w.key === '7d_oi')
+    expect(fableWindow).toMatchObject({ family: 'fable', isAccountWide: false })
   })
 
   it('skips windows the upstream did not report', () => {

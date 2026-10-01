@@ -21,13 +21,16 @@
 const logger = require('./logger')
 const { RATE_LIMITED_MODEL_FAMILIES } = require('./modelHelper')
 
-// 5h / 7d 是整个账号共享的窗口。Anthropic 不再下发独立的 Opus 周窗口
-// （历史上的 7d_oi / seven_day_opus）。按模型的额度只出现在 oauth usage 的
-// limits[] 里，例如 Fable。把 7d_oi 当成 Opus 会把一次共享窗口的 429 记成
-// 「这个模型停到 7 天窗口重置」，用量清零之后调度仍跳过该账号。
-const RATE_LIMIT_WINDOW_KEYS = ['5h', '7d']
+// 5h / 7d 是整个账号共享的窗口。oauth usage 的 seven_day_opus / seven_day_sonnet
+// 从 2026-07 起固定为 null，模型周额度只出现在 limits[] 的 weekly_scoped 里
+// （目前是 Fable）。Claude Code 把响应头 7d_oi 标成 “Fable 5 limit”
+// （seven_day_overage_included），不是 Opus。旧逻辑把 7d_oi 当成 Opus，
+// 于是一次 Fable 或共享窗口的 429 会把 Opus 停到 seven_day.resetsAt。
+const RATE_LIMIT_WINDOW_KEYS = ['5h', '7d', '7d_oi']
 
-const WINDOW_MODEL_FAMILY = {}
+const WINDOW_MODEL_FAMILY = {
+  '7d_oi': 'fable'
+}
 
 // 被拒绝的窗口状态。上游取值：allowed / allowed_warning / rejected
 const REJECTED_STATUS = 'rejected'
