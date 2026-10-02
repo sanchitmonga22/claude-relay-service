@@ -1012,17 +1012,11 @@ class ClaudeRelayService {
           await claudeAccountService.updateSessionWindowStatus(accountId, sessionWindowStatus)
         }
 
-        // 请求成功，清除401和500错误计数
+        // 请求成功，清除401和500错误计数。不要在这里解除限流：
+        // 一个已经发出的请求成功，不能把刚根据 5 小时窗口写上的锁清掉。
+        // 锁由用量快照和到期时间解除。
         await this.clearUnauthorizedErrors(accountId)
         await claudeAccountService.clearInternalErrors(accountId)
-        // 如果请求成功，检查并移除限流状态
-        const isRateLimited = await unifiedClaudeScheduler.isAccountRateLimited(
-          accountId,
-          accountType
-        )
-        if (isRateLimited) {
-          await unifiedClaudeScheduler.removeAccountRateLimit(accountId, accountType)
-        }
 
         // 如果请求成功，检查并移除过载状态
         try {
@@ -3019,17 +3013,9 @@ class ClaudeRelayService {
                 .catch(() => {})
             }
           } else if (res.statusCode === 200) {
-            // 请求成功，清除401和500错误计数
+            // 请求成功，清除401和500错误计数。限流锁保留到用量快照或窗口到期。
             await this.clearUnauthorizedErrors(accountId)
             await claudeAccountService.clearInternalErrors(accountId)
-            // 如果请求成功，检查并移除限流状态
-            const isRateLimited = await unifiedClaudeScheduler.isAccountRateLimited(
-              accountId,
-              accountType
-            )
-            if (isRateLimited) {
-              await unifiedClaudeScheduler.removeAccountRateLimit(accountId, accountType)
-            }
 
             // 如果流式请求成功，检查并移除过载状态
             try {

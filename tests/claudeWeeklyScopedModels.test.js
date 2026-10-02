@@ -23,6 +23,7 @@ jest.mock('../src/utils/webhookNotifier', () => ({ sendAccountAnomalyNotificatio
 jest.mock('../src/utils/upstreamErrorHelper', () => ({
   recordErrorHistory: jest.fn(() => ({ catch: jest.fn() })),
   markTempUnavailable: jest.fn(() => ({ catch: jest.fn() })),
+  clearTempUnavailable: jest.fn(async () => {}),
   parseRetryAfter: jest.fn(() => null)
 }))
 jest.mock('../src/utils/proxyHelper', () => ({}))
@@ -290,6 +291,64 @@ describe('updateClaudeUsageSnapshot', () => {
 
     expect(savedAccount().fableRateLimitEndAt).toBe('2026-10-06T01:00:00.000Z')
     expect(savedAccount().opusRateLimitEndAt).toBeUndefined()
+  })
+
+  it('parks a full 5-hour window only until that window resets', async () => {
+    redis.getClaudeAccount.mockResolvedValue({
+      id: 'acc-1',
+      name: 'seat',
+      schedulable: 'false',
+      rateLimitStatus: 'limited',
+      rateLimitEndAt: '2026-10-05T09:00:00.000Z',
+      rateLimitAutoStopped: 'true'
+    })
+
+    await claudeAccountService.updateClaudeUsageSnapshot('acc-1', {
+      five_hour: { utilization: 100, resets_at: '2099-10-02T03:10:00.000Z' },
+      seven_day: { utilization: 81, resets_at: '2099-10-03T14:00:00.000Z' },
+      limits: []
+    })
+
+    expect(savedAccount().schedulable).toBe('false')
+    expect(savedAccount().rateLimitEndAt).toBe('2099-10-02T03:10:00.000Z')
+  })
+
+  it('clears an account lock when both shared windows have room', async () => {
+    const upstreamErrorHelper = require('../src/utils/upstreamErrorHelper')
+    redis.getClaudeAccount.mockResolvedValue({
+      id: 'acc-1',
+      name: 'seat',
+      schedulable: 'false',
+      rateLimitStatus: 'limited',
+      rateLimitedAt: '2026-09-30T18:00:00.000Z',
+      rateLimitEndAt: '2026-10-05T09:00:00.000Z',
+      rateLimitAutoStopped: 'true'
+    })
+
+    await claudeAccountService.updateClaudeUsageSnapshot('acc-1', {
+      five_hour: { utilization: 0, resets_at: '2026-09-30T21:00:00.000Z' },
+      seven_day: { utilization: 0, resets_at: '2026-10-05T09:00:00.000Z' },
+      limits: []
+    })
+
+    const saved = savedAccount()
+    expect(saved.schedulable).toBe('true')
+    expect(saved.rateLimitEndAt).toBeUndefined()
+    expect(saved.rateLimitStatus).toBeUndefined()
+    expect(upstreamErrorHelper.clearTempUnavailable).toHaveBeenCalledWith('acc-1', 'claude-official')
+  })
+
+  it('parks a full weekly window until the weekly reset', async () => {
+    redis.getClaudeAccount.mockResolvedValue({ id: 'acc-1', name: 'seat', schedulable: 'true' })
+
+    await claudeAccountService.updateClaudeUsageSnapshot('acc-1', {
+      five_hour: { utilization: 16, resets_at: '2099-10-02T01:00:00.000Z' },
+      seven_day: { utilization: 100, resets_at: '2099-10-06T01:00:00.000Z' },
+      limits: []
+    })
+
+    expect(savedAccount().rateLimitEndAt).toBe('2099-10-06T01:00:00.000Z')
+    expect(savedAccount().schedulable).toBe('false')
   })
 
   it('refreshes only active oauth accounts from the cleanup cycle', async () => {

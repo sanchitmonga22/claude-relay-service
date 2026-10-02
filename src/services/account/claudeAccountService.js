@@ -18,7 +18,10 @@ const tokenRefreshService = require('../tokenRefreshService')
 const LRUCache = require('../../utils/lruCache')
 const { formatDateWithTimezone, getISOStringWithTimezone } = require('../../utils/dateHelper')
 const { isOpus45OrNewer, RATE_LIMITED_MODEL_FAMILIES } = require('../../utils/modelHelper')
-const { reconcileModelFamilyLocks } = require('../../utils/rateLimitHeaderHelper')
+const {
+  reconcileModelFamilyLocks,
+  reconcileAccountWindowLock
+} = require('../../utils/rateLimitHeaderHelper')
 const {
   parseBooleanLike,
   normalizeOptionalNonNegativeInteger,
@@ -2346,11 +2349,24 @@ class ClaudeAccountService {
     const accountData = await redis.getClaudeAccount(accountId)
     if (accountData && Object.keys(accountData).length > 0) {
       const reconciled = reconcileModelFamilyLocks(accountData, scopedModels)
-      for (const field of reconciled.fieldsToDelete) delete accountData[field]
-      Object.assign(accountData, updates, reconciled.updates)
+      const windowLock = reconcileAccountWindowLock(usageData)
+      const fieldsToDelete = [...reconciled.fieldsToDelete]
+      if (windowLock) {
+        for (const field of windowLock.fieldsToDelete) {
+          if (accountData[field] !== undefined && accountData[field] !== null && accountData[field] !== '') {
+            fieldsToDelete.push(field)
+          }
+        }
+      }
+      for (const field of fieldsToDelete) delete accountData[field]
+      Object.assign(accountData, updates, reconciled.updates, windowLock ? windowLock.updates : {})
       await redis.setClaudeAccount(accountId, accountData)
-      if (reconciled.fieldsToDelete.length > 0) {
-        await redis.client.hdel(`claude:account:${accountId}`, ...reconciled.fieldsToDelete)
+      if (fieldsToDelete.length > 0) {
+        await redis.client.hdel(`claude:account:${accountId}`, ...fieldsToDelete)
+      }
+      if (windowLock && !windowLock.blocked) {
+        await upstreamErrorHelper.clearTempUnavailable(accountId, 'claude-official')
+        await upstreamErrorHelper.clearTempUnavailable(accountId, 'claude')
       }
       logger.debug(
         `📊 Updated Claude usage snapshot for account ${accountId}:`,

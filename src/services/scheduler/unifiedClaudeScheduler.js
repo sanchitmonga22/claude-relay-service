@@ -11,6 +11,17 @@ const {
   getRateLimitModelFamily
 } = require('../../utils/modelHelper')
 const { isSchedulable, sortAccountsByPriority } = require('../../utils/commonHelper')
+
+// Prefer the account with the most room left in its fuller shared window.
+// Equal utilization keeps the existing priority and last-used order.
+const fullestWindow = (account) => {
+  const values = [account.claudeFiveHourUtilization, account.claudeSevenDayUtilization]
+    .map(Number)
+    .filter((value) => Number.isFinite(value))
+  return values.length ? Math.max(...values) : 0
+}
+const sortClaudeAccounts = (accounts) =>
+  sortAccountsByPriority(accounts).sort((a, b) => fullestWindow(a) - fullestWindow(b))
 const upstreamErrorHelper = require('../../utils/upstreamErrorHelper')
 const config = require('../../../config/config')
 
@@ -479,8 +490,8 @@ class UnifiedClaudeScheduler {
         }
       }
 
-      // 按优先级和最后使用时间排序
-      const sortedAccounts = sortAccountsByPriority(availableAccounts)
+      // 先按优先级，再用 5 小时/7 天用量把还有额度的账号排到前面
+      const sortedAccounts = sortClaudeAccounts(availableAccounts)
 
       // 选择第一个账户
       const selectedAccount = sortedAccounts[0]
@@ -1687,8 +1698,8 @@ class UnifiedClaudeScheduler {
         throw new Error(`No available accounts in group ${group.name}`)
       }
 
-      // 使用现有的优先级排序逻辑
-      const sortedAccounts = sortAccountsByPriority(availableAccounts)
+      // 分组内同样优先还有额度的账号
+      const sortedAccounts = sortClaudeAccounts(availableAccounts)
 
       // 选择第一个账户
       const selectedAccount = sortedAccounts[0]
