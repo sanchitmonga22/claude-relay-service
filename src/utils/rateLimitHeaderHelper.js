@@ -225,6 +225,58 @@ function classifyRateLimitMark(resolution, modelFamily) {
   return { action: 'none', family: null, resetTimestamp: null }
 }
 
+function windowIsFull(window) {
+  if (!window || window.utilization === undefined || window.utilization === null) return false
+  const utilization = Number(window.utilization)
+  return Number.isFinite(utilization) && utilization >= 100
+}
+
+function futureReset(resetsAt, nowMs) {
+  const time = new Date(resetsAt).getTime()
+  return Number.isFinite(time) && time > nowMs ? time : null
+}
+
+/**
+ * The shared 5-hour and 7-day meters are the source of truth for whether an
+ * account can take another turn. A full 5-hour window parks the account only
+ * until that window resets. A full weekly window parks it until the weekly
+ * reset. If neither meter is full, any earlier account-level lock is stale.
+ */
+function reconcileAccountWindowLock(usageData, nowMs = Date.now()) {
+  const fiveHour = usageData && usageData.five_hour
+  const sevenDay = usageData && usageData.seven_day
+  if (!fiveHour && !sevenDay) return null
+
+  const resets = []
+  if (windowIsFull(fiveHour)) {
+    const reset = futureReset(fiveHour.resets_at, nowMs)
+    if (reset) resets.push(reset)
+  }
+  if (windowIsFull(sevenDay)) {
+    const reset = futureReset(sevenDay.resets_at, nowMs)
+    if (reset) resets.push(reset)
+  }
+
+  if (resets.length === 0) {
+    return {
+      blocked: false,
+      updates: { schedulable: 'true' },
+      fieldsToDelete: ['rateLimitedAt', 'rateLimitStatus', 'rateLimitEndAt', 'rateLimitAutoStopped']
+    }
+  }
+
+  return {
+    blocked: true,
+    updates: {
+      rateLimitStatus: 'limited',
+      rateLimitEndAt: new Date(Math.max(...resets)).toISOString(),
+      rateLimitAutoStopped: 'true',
+      schedulable: 'false'
+    },
+    fieldsToDelete: []
+  }
+}
+
 function familyForScopedModel(modelName) {
   const name = String(modelName || '').toLowerCase()
   return RATE_LIMITED_MODEL_FAMILIES.find((family) => name.includes(family)) || null
@@ -272,5 +324,6 @@ module.exports = {
   parseRateLimitWindows,
   resolveRateLimitReset,
   classifyRateLimitMark,
+  reconcileAccountWindowLock,
   reconcileModelFamilyLocks
 }
